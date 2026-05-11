@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.deps_installed
+.env
+venv/
+.venv/
+node_modules/
+workspace/*
+!workspace/.gitkeep
+.DS_Store
