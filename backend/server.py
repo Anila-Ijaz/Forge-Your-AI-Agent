@@ -6,6 +6,7 @@ FastAPI backend exposing a streaming chat endpoint and workspace file access.
 import json
 import os
 from pathlib import Path
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
@@ -14,6 +15,7 @@ from pydantic import BaseModel
 
 from agent import ForgeAgent
 from tools import WORKSPACE_DIR
+from metrics import metrics
 
 app = FastAPI(title="Forge AI Agent")
 
@@ -40,12 +42,21 @@ class ChatRequest(BaseModel):
 def chat(req: ChatRequest):
     """Stream agent events as Server-Sent Events."""
     def event_stream():
+        run = metrics.start_run(req.message)
+        status = "done"
         try:
             for event in agent.step(req.message):
+                if event.get("type") == "tool_call":
+                    metrics.record_tool(run, event.get("name", "unknown"))
+                elif event.get("type") == "error":
+                    status = "error"
                 yield f"data: {json.dumps(event)}\n\n"
             yield "data: {\"type\": \"done\"}\n\n"
         except Exception as e:
+            status = "error"
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+        finally:
+            metrics.finish_run(run, status)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -82,12 +93,50 @@ def health():
     return {"status": "ok", "model": MODEL, "workspace": str(WORKSPACE_DIR)}
 
 
+def _ollama_status() -> dict:
+    """Check whether Ollama is reachable and which models are installed."""
+    try:
+        resp = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=2)
+        resp.raise_for_status()
+        models = [m.get("name", "") for m in resp.json().get("models", [])]
+        return {"connected": True, "host": OLLAMA_HOST, "models": models}
+    except Exception as e:
+        return {"connected": False, "host": OLLAMA_HOST, "error": str(e)}
+
+
+def _workspace_stats() -> dict:
+    """Count files and total bytes in the workspace."""
+    count, total = 0, 0
+    for root, _, names in os.walk(WORKSPACE_DIR):
+        for n in names:
+            try:
+                total += (Path(root) / n).stat().st_size
+                count += 1
+            except OSError:
+                pass
+    return {"files": count, "bytes": total}
+
+
+@app.get("/api/stats")
+def stats():
+    """Aggregate metrics for the dashboard."""
+    snap = metrics.snapshot()
+    snap["model"] = MODEL
+    snap["ollama"] = _ollama_status()
+    snap["workspace"] = _workspace_stats()
+    return snap
+
+
 # Serve frontend
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 if FRONTEND_DIR.exists():
     @app.get("/")
     def index():
         return FileResponse(FRONTEND_DIR / "index.html")
+
+    @app.get("/dashboard")
+    def dashboard():
+        return FileResponse(FRONTEND_DIR / "dashboard.html")
 
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
