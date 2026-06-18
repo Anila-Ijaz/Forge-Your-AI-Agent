@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forge — Dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #21262d;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #ff7b29;
+    --ok: #3fb950;
+    --error: #f85149;
+    --user: #1f6feb;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+  .logo-mark {
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, var(--accent), #ff4422);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+  }
+  .logo-sub { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .nav { display: flex; gap: 8px; align-items: center; }
+  .nav a {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    text-decoration: none;
+  }
+  .nav a:hover { background: var(--border); }
+  .nav a.active { border-color: var(--accent); color: var(--accent); }
+
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 24px; }
+
+  .status-bar {
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 20px;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 7px; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.off { background: var(--error); box-shadow: 0 0 8px var(--error); }
+  .status-item { font-size: 14px; }
+  .status-item .label { color: var(--muted); font-size: 12px; }
+  .status-item .value { font-weight: 600; }
+  .spacer { flex: 1; }
+  .refresh-note { color: var(--muted); font-size: 12px; }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 720px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+  }
+  .card .num { font-size: 30px; font-weight: 700; line-height: 1; }
+  .card .cap {
+    color: var(--muted); font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.5px; margin-top: 8px;
+  }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .section h3 {
+    font-size: 12px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 14px;
+  }
+
+  .bar-row { margin-bottom: 12px; }
+  .bar-row:last-child { margin-bottom: 0; }
+  .bar-top { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 5px; }
+  .bar-name { font-family: "SF Mono", Monaco, Consolas, monospace; }
+  .bar-count { color: var(--muted); }
+  .bar-track { background: var(--panel-2); border-radius: 5px; height: 8px; overflow: hidden; }
+  .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #ff4422); border-radius: 5px; transition: width 0.4s ease; }
+
+  .run { padding: 11px 0; border-bottom: 1px solid var(--border); }
+  .run:last-child { border-bottom: none; }
+  .run-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .run-prompt { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  .badge.done { background: #12361f; color: var(--ok); }
+  .badge.error { background: #2d1416; color: var(--error); }
+  .badge.running { background: #15243f; color: var(--user); }
+  .run-tools { color: var(--muted); font-size: 12px; margin-top: 4px; font-family: "SF Mono", Monaco, Consolas, monospace; }
+
+  .empty { color: var(--muted); font-size: 13px; padding: 10px 0; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-mark">⚒</div>
+      <div>Forge <span class="logo-sub">— Dashboard</span></div>
+    </div>
+    <nav class="nav">
+      <a href="/">Chat</a>
+      <a href="/dashboard" class="active">Dashboard</a>
+    </nav>
+  </header>
+
+  <div class="wrap">
+    <div class="status-bar">
+      <div class="status-item">
+        <span id="ollamaDot" class="dot off"></span>
+        <span class="value" id="ollamaText">Checking…</span>
+      </div>
+      <div class="status-item">
+        <div class="label">Model</div>
+        <div class="value" id="modelText">—</div>
+      </div>
+      <div class="status-item">
+        <div class="label">Uptime</div>
+        <div class="value" id="uptimeText">—</div>
+      </div>
+      <div class="spacer"></div>
+      <div class="refresh-note">Auto-refreshing every 3s</div>
+    </div>
+
+    <div class="cards">
+      <div class="card"><div class="num" id="cRuns">0</div><div class="cap">Total runs</div></div>
+      <div class="card"><div class="num" id="cTools">0</div><div class="cap">Tool calls</div></div>
+      <div class="card"><div class="num" id="cFiles">0</div><div class="cap">Workspace files</div></div>
+      <div class="card"><div class="num" id="cSize">0 B</div><div class="cap">Workspace size</div></div>
+    </div>
+
+    <div class="grid2">
+      <div class="section">
+        <h3>Tool Usage</h3>
+        <div id="toolBars"><div class="empty">No tool calls yet.</div></div>
+      </div>
+      <div class="section">
+        <h3>Recent Runs</h3>
+        <div id="runList"><div class="empty">No runs yet. Head to Chat and ask Forge to build something.</div></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+const API = window.location.origin;
+
+function fmtSize(b) {
+  if (b < 1024) return b + " B";
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+  return (b / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function fmtDuration(s) {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60), sec = s % 60;
+  if (m < 60) return `${m}m ${sec}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+function ago(epochSeconds) {
+  const diff = Date.now() / 1000 - epochSeconds;
+  if (diff < 60) return Math.round(diff) + "s ago";
+  if (diff < 3600) return Math.round(diff / 60) + "m ago";
+  if (diff < 86400) return Math.round(diff / 3600) + "h ago";
+  return Math.round(diff / 86400) + "d ago";
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function setText(id, txt) { document.getElementById(id).textContent = txt; }
+
+function renderToolBars(counts) {
+  const el = document.getElementById("toolBars");
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    el.innerHTML = `<div class="empty">No tool calls yet.</div>`;
+    return;
+  }
+  const max = Math.max(...entries.map(e => e[1]));
+  el.innerHTML = entries.map(([name, n]) => `
+    <div class="bar-row">
+      <div class="bar-top">
+        <span class="bar-name">${escapeHtml(name)}</span>
+        <span class="bar-count">${n}</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(n / max * 100).toFixed(1)}%"></div></div>
+    </div>`).join("");
+}
+
+function renderRuns(runs) {
+  const el = document.getElementById("runList");
+  if (!runs || runs.length === 0) {
+    el.innerHTML = `<div class="empty">No runs yet. Head to Chat and ask Forge to build something.</div>`;
+    return;
+  }
+  el.innerHTML = runs.map(r => {
+    const dur = r.finished_at ? fmtDuration(r.finished_at - r.started_at) : "running…";
+    const toolsLine = r.tools && r.tools.length
+      ? `<div class="run-tools">${escapeHtml(r.tools.join(" · "))}</div>` : "";
+    return `
+      <div class="run">
+        <div class="run-top">
+          <span class="run-prompt">${escapeHtml(r.prompt || "(empty)")}</span>
+          <span class="badge ${r.status}">${r.status}</span>
+        </div>
+        <div class="run-meta">${ago(r.started_at)} · ${r.tool_calls} tool calls · ${dur}</div>
+        ${toolsLine}
+      </div>`;
+  }).join("");
+}
+
+async function refresh() {
+  try {
+    const res = await fetch(`${API}/api/stats`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+
+    const on = d.ollama && d.ollama.connected;
+    document.getElementById("ollamaDot").className = "dot " + (on ? "on" : "off");
+    setText("ollamaText", on ? "Ollama connected" : "Ollama offline");
+
+    setText("modelText", d.model || "—");
+    setText("uptimeText", fmtDuration(d.uptime_seconds || 0));
+
+    setText("cRuns", d.total_runs || 0);
+    setText("cTools", d.total_tool_calls || 0);
+    setText("cFiles", (d.workspace && d.workspace.files) || 0);
+    setText("cSize", fmtSize((d.workspace && d.workspace.bytes) || 0));
+
+    renderToolBars(d.tool_counts || {});
+    renderRuns(d.runs || []);
+  } catch (e) {
+    setText("ollamaText", "Server unreachable");
+    document.getElementById("ollamaDot").className = "dot off";
+  }
+}
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
