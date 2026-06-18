@@ -64,6 +64,17 @@
     font-size: 13px;
   }
   header button:hover { background: var(--border); }
+  .header-actions { display: flex; gap: 8px; align-items: center; }
+  .nav-link {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    text-decoration: none;
+  }
+  .nav-link:hover { border-color: var(--accent); color: var(--accent); }
 
   main {
     flex: 1;
@@ -273,7 +284,10 @@
         <span class="logo-sub">— Local AI Agent</span>
       </div>
     </div>
-    <button id="resetBtn">New Chat</button>
+    <div class="header-actions">
+      <a class="nav-link" href="/dashboard">Dashboard</a>
+      <button id="resetBtn">New Chat</button>
+    </div>
   </header>
 
   <main>
