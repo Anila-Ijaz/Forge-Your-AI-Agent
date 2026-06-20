@@ -17,7 +17,7 @@
 Ask Forge things like:
 
 - *"Build a Snake game as a single HTML file"*
-- *"Create a portfolio website with a dark theme"*
+- *"Create a portfolio website"*
 - *"Write a Python script that summarizes a PDF"*
 - *"Search for the latest Llama model and tell me about it"*
 - *"Set up a basic Express.js server with a /hello endpoint and run it"*
