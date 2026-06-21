@@ -29,7 +29,7 @@ app.add_middleware(
 
 # One agent instance per server (single-user local app).
 # For multi-user, you'd key by session ID.
-MODEL = os.environ.get("FORGE_MODEL", "llama3.1")
+MODEL = os.environ.get("FORGE_MODEL", "qwen2.5-coder:7b")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 agent = ForgeAgent(model=MODEL, host=OLLAMA_HOST)
 
