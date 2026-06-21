@@ -41,9 +41,52 @@ BUILDING A PORTFOLIO / WEBSITE FROM A CV:
 - After writing, summarize the sections you included so the user can verify nothing was dropped.
 """
 
+# Valid tool names, used to validate recovered tool calls.
+TOOL_NAMES = {t["function"]["name"] for t in TOOLS_SCHEMA}
+
+
+def _normalize_tool_obj(obj: dict):
+    """Turn a loosely-shaped dict into our internal tool-call format, or None."""
+    if not isinstance(obj, dict):
+        return None
+    # Style A: {"function": {"name": ..., "arguments": {...}}}
+    fn = obj.get("function")
+    if isinstance(fn, dict) and fn.get("name") in TOOL_NAMES:
+        args = fn.get("arguments") or fn.get("parameters") or {}
+        return {"function": {"name": fn["name"], "arguments": args}}
+    # Style B: {"name": ..., "arguments"|"parameters": {...}}
+    name = obj.get("name")
+    if isinstance(name, str) and name in TOOL_NAMES:
+        args = obj.get("arguments") or obj.get("parameters") or {}
+        return {"function": {"name": name, "arguments": args}}
+    return None
+
+
+def _extract_text_tool_calls(text: str):
+    """Recover tool calls that a weak model printed as raw JSON in its text
+    instead of returning them as structured tool_calls. Scans for balanced
+    top-level {...} blocks, parses each, and keeps valid tool calls."""
+    calls, depth, start = [], 0, None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    norm = _normalize_tool_obj(json.loads(text[start:i + 1]))
+                except json.JSONDecodeError:
+                    norm = None
+                if norm:
+                    calls.append(norm)
+                start = None
+    return calls
+
 
 class ForgeAgent:
-    def __init__(self, model: str = "llama3.1", host: str = "http://localhost:11434"):
+    def __init__(self, model: str = "qwen2.5-coder:7b", host: str = "http://localhost:11434"):
         self.model = model
         self.client = ollama.Client(host=host)
         self.conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -77,6 +120,12 @@ class ForgeAgent:
             assistant_text = msg.get("content", "") or ""
             tool_calls = msg.get("tool_calls") or []
 
+            # Fallback: some local models emit tool calls as raw JSON in their
+            # text instead of as structured tool_calls. Try to recover them.
+            recovered = []
+            if not tool_calls and assistant_text.strip():
+                recovered = _extract_text_tool_calls(assistant_text)
+
             # Record assistant turn
             self.conversation.append({
                 "role": "assistant",
@@ -84,16 +133,19 @@ class ForgeAgent:
                 "tool_calls": tool_calls if tool_calls else None,
             })
 
-            if assistant_text.strip():
+            # Show prose, but not when the text was purely a recovered tool call
+            if assistant_text.strip() and not recovered:
                 yield {"type": "thinking", "content": assistant_text}
 
+            calls = tool_calls or recovered
+
             # No tool calls — the agent is done
-            if not tool_calls:
+            if not calls:
                 yield {"type": "final", "content": assistant_text}
                 return
 
             # Execute each requested tool
-            for tc in tool_calls:
+            for tc in calls:
                 fn = tc["function"]
                 name = fn["name"]
                 args = fn.get("arguments", {})
