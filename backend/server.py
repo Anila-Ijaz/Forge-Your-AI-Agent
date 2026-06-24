@@ -17,6 +17,24 @@ from agent import ForgeAgent
 from tools import WORKSPACE_DIR
 from metrics import metrics
 
+
+def _load_dotenv():
+    """Load KEY=VALUE pairs from a project-root .env file into the environment
+    (without overriding values already set). Keeps secrets like OPENAI_API_KEY
+    out of the code and out of git (.env is gitignored)."""
+    env_path = Path(__file__).parent.parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
+
 app = FastAPI(title="Forge AI Agent")
 
 app.add_middleware(
@@ -29,9 +47,18 @@ app.add_middleware(
 
 # One agent instance per server (single-user local app).
 # For multi-user, you'd key by session ID.
-MODEL = os.environ.get("FORGE_MODEL", "qwen2.5-coder:7b")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+PROVIDER = os.environ.get("FORGE_PROVIDER", "openai" if OPENAI_API_KEY else "ollama").lower()
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-agent = ForgeAgent(model=MODEL, host=OLLAMA_HOST)
+agent = ForgeAgent(
+    provider=PROVIDER,
+    model=os.environ.get("FORGE_MODEL"),
+    host=OLLAMA_HOST,
+    api_key=OPENAI_API_KEY,
+)
+# Resolved values (agent fills in provider defaults when unset).
+PROVIDER = agent.provider
+MODEL = agent.model
 
 
 class ChatRequest(BaseModel):
@@ -90,18 +117,21 @@ def get_workspace_file(path: str):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "model": MODEL, "workspace": str(WORKSPACE_DIR)}
+    return {"status": "ok", "provider": PROVIDER, "model": MODEL, "workspace": str(WORKSPACE_DIR)}
 
 
-def _ollama_status() -> dict:
-    """Check whether Ollama is reachable and which models are installed."""
+def _provider_status() -> dict:
+    """Report whether the active model provider is reachable/configured."""
+    if PROVIDER == "openai":
+        # We don't spend a request just to ping; a present key means it's configured.
+        return {"provider": "openai", "connected": bool(OPENAI_API_KEY), "model": MODEL}
     try:
         resp = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=2)
         resp.raise_for_status()
         models = [m.get("name", "") for m in resp.json().get("models", [])]
-        return {"connected": True, "host": OLLAMA_HOST, "models": models}
+        return {"provider": "ollama", "connected": True, "host": OLLAMA_HOST, "models": models}
     except Exception as e:
-        return {"connected": False, "host": OLLAMA_HOST, "error": str(e)}
+        return {"provider": "ollama", "connected": False, "host": OLLAMA_HOST, "error": str(e)}
 
 
 def _workspace_stats() -> dict:
@@ -122,7 +152,7 @@ def stats():
     """Aggregate metrics for the dashboard."""
     snap = metrics.snapshot()
     snap["model"] = MODEL
-    snap["ollama"] = _ollama_status()
+    snap["provider"] = _provider_status()
     snap["workspace"] = _workspace_stats()
     return snap
 

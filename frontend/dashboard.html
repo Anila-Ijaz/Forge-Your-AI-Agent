@@ -258,9 +258,11 @@ async function refresh() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const d = await res.json();
 
-    const on = d.ollama && d.ollama.connected;
+    const prov = d.provider || {};
+    const on = prov.connected;
+    const pname = prov.provider === "openai" ? "OpenAI" : "Ollama";
     document.getElementById("ollamaDot").className = "dot " + (on ? "on" : "off");
-    setText("ollamaText", on ? "Ollama connected" : "Ollama offline");
+    setText("ollamaText", on ? pname + " connected" : pname + " offline");
 
     setText("modelText", d.model || "—");
     setText("uptimeText", fmtDuration(d.uptime_seconds || 0));

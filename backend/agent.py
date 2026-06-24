@@ -5,7 +5,7 @@ Runs a multi-step agent: model thinks → calls tools → sees results → repea
 until it produces a final answer or hits the step limit.
 """
 import json
-import ollama
+import os
 from tools import TOOLS_SCHEMA, execute_tool
 
 SYSTEM_PROMPT = """You are Forge, a capable AI agent that can build software, browse the web, and execute commands.
@@ -26,6 +26,7 @@ Guidelines:
 4. After creating files, briefly summarize what you built and how to run it.
 5. If you need current information, use web_search and web_fetch.
 6. Be efficient: only call tools you actually need. When you've completed the task, give a concise final answer with no further tool calls.
+7. Files you create are saved to the workspace and appear in the app's "Workspace Files" panel, where the user can open/download them. To deliver a file, just write it and tell the user its filename — do NOT invent download links like "sandbox:/file" or "[Download](...)"; those do not work here.
 
 WORKING FROM SOURCE MATERIAL (resume, CV, LaTeX, notes, existing text):
 - When the user provides content (e.g. a LaTeX CV, a resume, a bio, a list), that content is your SOURCE OF TRUTH. Your job is to TRANSFORM it, not to invent something new.
@@ -43,6 +44,18 @@ BUILDING A PORTFOLIO / WEBSITE FROM A CV:
 
 # Valid tool names, used to validate recovered tool calls.
 TOOL_NAMES = {t["function"]["name"] for t in TOOLS_SCHEMA}
+
+
+def _loads(args):
+    """Coerce tool-call arguments (which may be a JSON string or already a dict) into a dict."""
+    if isinstance(args, dict):
+        return args
+    if isinstance(args, str):
+        try:
+            return json.loads(args)
+        except json.JSONDecodeError:
+            return {}
+    return {}
 
 
 def _normalize_tool_obj(obj: dict):
@@ -85,14 +98,80 @@ def _extract_text_tool_calls(text: str):
     return calls
 
 
+# Sensible default model per provider.
+DEFAULT_MODELS = {"openai": "gpt-4o-mini", "ollama": "qwen2.5-coder:7b"}
+
+
 class ForgeAgent:
-    def __init__(self, model: str = "qwen2.5-coder:7b", host: str = "http://localhost:11434"):
-        self.model = model
-        self.client = ollama.Client(host=host)
+    """Multi-step tool-using agent backed by either OpenAI or a local Ollama model.
+
+    Provider selection:
+      - explicit `provider=` argument, else
+      - FORGE_PROVIDER env var, else
+      - "openai" if an API key is available, otherwise "ollama".
+    """
+
+    def __init__(self, provider: str = None, model: str = None,
+                 host: str = "http://localhost:11434", api_key: str = None):
+        api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        self.provider = (provider or os.environ.get("FORGE_PROVIDER")
+                         or ("openai" if api_key else "ollama")).lower()
+        self.model = model or os.environ.get("FORGE_MODEL") or DEFAULT_MODELS[self.provider]
+
+        if self.provider == "openai":
+            from openai import OpenAI
+            if not api_key:
+                raise ValueError(
+                    "OpenAI provider selected but no API key found. "
+                    "Set OPENAI_API_KEY (env var or .env file)."
+                )
+            self.client = OpenAI(api_key=api_key)
+        elif self.provider == "ollama":
+            import ollama
+            self.client = ollama.Client(host=host)
+        else:
+            raise ValueError(f"Unknown provider: {self.provider!r} (use 'openai' or 'ollama')")
+
         self.conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     def reset(self):
         self.conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+    # ---------- Provider-specific completion ----------
+
+    def _complete(self):
+        """Call the model once. Returns (assistant_text, calls, assistant_msg) where
+        `calls` is a normalized list of {"id", "name", "arguments"} and
+        `assistant_msg` is the turn to append to the conversation."""
+        if self.provider == "openai":
+            resp = self.client.chat.completions.create(
+                model=self.model, messages=self.conversation, tools=TOOLS_SCHEMA,
+            )
+            msg = resp.choices[0].message
+            text = msg.content or ""
+            raw = msg.tool_calls or []
+            calls = [{"id": tc.id, "name": tc.function.name,
+                      "arguments": _loads(tc.function.arguments)} for tc in raw]
+            assistant_msg = {"role": "assistant", "content": text or None}
+            if raw:
+                assistant_msg["tool_calls"] = [
+                    {"id": tc.id, "type": "function",
+                     "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                    for tc in raw
+                ]
+            return text, calls, assistant_msg
+
+        # ollama
+        resp = self.client.chat(model=self.model, messages=self.conversation, tools=TOOLS_SCHEMA)
+        msg = resp["message"]
+        text = msg.get("content", "") or ""
+        raw = msg.get("tool_calls") or []
+        calls = [{"id": None, "name": tc["function"]["name"],
+                  "arguments": _loads(tc["function"].get("arguments", {}))} for tc in raw]
+        assistant_msg = {"role": "assistant", "content": text, "tool_calls": raw or None}
+        return text, calls, assistant_msg
+
+    # ---------- Agent loop ----------
 
     def step(self, user_message: str, max_iterations: int = 10):
         """
@@ -107,37 +186,25 @@ class ForgeAgent:
 
         for iteration in range(max_iterations):
             try:
-                response = self.client.chat(
-                    model=self.model,
-                    messages=self.conversation,
-                    tools=TOOLS_SCHEMA,
-                )
+                assistant_text, calls, assistant_msg = self._complete()
             except Exception as e:
-                yield {"type": "error", "content": f"Ollama error: {e}"}
+                yield {"type": "error", "content": f"{self.provider} error: {e}"}
                 return
 
-            msg = response["message"]
-            assistant_text = msg.get("content", "") or ""
-            tool_calls = msg.get("tool_calls") or []
+            self.conversation.append(assistant_msg)
 
-            # Fallback: some local models emit tool calls as raw JSON in their
-            # text instead of as structured tool_calls. Try to recover them.
-            recovered = []
-            if not tool_calls and assistant_text.strip():
-                recovered = _extract_text_tool_calls(assistant_text)
-
-            # Record assistant turn
-            self.conversation.append({
-                "role": "assistant",
-                "content": assistant_text,
-                "tool_calls": tool_calls if tool_calls else None,
-            })
+            # Fallback: weak local models sometimes print tool calls as raw JSON
+            # text instead of returning structured tool_calls. Recover them.
+            recovered = False
+            if not calls and assistant_text.strip() and self.provider == "ollama":
+                rec = _extract_text_tool_calls(assistant_text)
+                calls = [{"id": None, "name": c["function"]["name"],
+                          "arguments": c["function"]["arguments"]} for c in rec]
+                recovered = bool(calls)
 
             # Show prose, but not when the text was purely a recovered tool call
             if assistant_text.strip() and not recovered:
                 yield {"type": "thinking", "content": assistant_text}
-
-            calls = tool_calls or recovered
 
             # No tool calls — the agent is done
             if not calls:
@@ -145,24 +212,16 @@ class ForgeAgent:
                 return
 
             # Execute each requested tool
-            for tc in calls:
-                fn = tc["function"]
-                name = fn["name"]
-                args = fn.get("arguments", {})
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except json.JSONDecodeError:
-                        args = {}
-
+            for call in calls:
+                name, args = call["name"], _loads(call["arguments"])
                 yield {"type": "tool_call", "name": name, "arguments": args}
                 result = execute_tool(name, args)
                 yield {"type": "tool_result", "name": name, "result": result}
 
-                # Feed result back to the model
-                self.conversation.append({
-                    "role": "tool",
-                    "content": json.dumps(result)[:8000],  # cap tool output
-                })
+                # Feed result back to the model (OpenAI requires the tool_call_id)
+                tool_msg = {"role": "tool", "content": json.dumps(result)[:8000]}
+                if self.provider == "openai" and call.get("id"):
+                    tool_msg["tool_call_id"] = call["id"]
+                self.conversation.append(tool_msg)
 
         yield {"type": "error", "content": f"Reached max iterations ({max_iterations}) without finishing."}

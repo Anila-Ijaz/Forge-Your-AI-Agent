@@ -136,6 +136,19 @@
     border-left: 3px solid var(--error);
     color: #ffb3b3;
   }
+  .tool-step {
+    align-self: flex-start;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 12px;
+    font-family: "SF Mono", Monaco, Consolas, monospace;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .tool-step-icon { color: var(--accent); }
+  .tool-step-status { font-weight: 700; }
+
   .tool-header {
     color: var(--tool);
     font-weight: 600;
@@ -348,34 +361,24 @@ function addMessage(role, content, opts = {}) {
   return div;
 }
 
-function addToolCall(name, args) {
+// Compact, single-line progress step (no argument/output clutter).
+function addToolStep(name) {
   if (welcomeEl) welcomeEl.remove();
   const div = document.createElement("div");
-  div.className = "msg tool";
-  const argsStr = JSON.stringify(args, null, 2);
-  div.innerHTML = `
-    <div class="tool-header">⚒ ${escapeHtml(name)}</div>
-    <div class="tool-body">
-      <details><summary>Arguments</summary><pre>${escapeHtml(argsStr)}</pre></details>
-    </div>`;
+  div.className = "tool-step";
+  div.innerHTML = `<span class="tool-step-icon">⚒</span> <span>${escapeHtml(name)}</span><span class="tool-step-status">…</span>`;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
 }
 
-function addToolResult(name, result) {
-  const div = document.createElement("div");
-  div.className = "msg tool";
-  const ok = result && result.success !== false;
-  const icon = ok ? "✓" : "✗";
-  const summary = result && result.error ? "Error" : "Result";
-  div.innerHTML = `
-    <div class="tool-header" style="color:${ok ? 'var(--tool)' : 'var(--error)'}">${icon} ${escapeHtml(name)} ${escapeHtml(summary).toLowerCase()}</div>
-    <div class="tool-body">
-      <details><summary>View output</summary><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>
-    </div>`;
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+function resolveToolStep(div, ok) {
+  if (!div) return;
+  const status = div.querySelector(".tool-step-status");
+  if (status) {
+    status.textContent = ok ? "✓" : "✗";
+    status.style.color = ok ? "var(--tool)" : "var(--error)";
+  }
 }
 
 function escapeHtml(s) {
@@ -437,6 +440,7 @@ async function send() {
     const decoder = new TextDecoder();
     let buffer = "";
     let typingRemoved = false;
+    let currentToolStep = null;
 
     while (true) {
       const {value, done} = await reader.read();
@@ -454,9 +458,10 @@ async function send() {
         if (evt.type === "thinking" && evt.content) {
           addMessage("assistant", evt.content);
         } else if (evt.type === "tool_call") {
-          addToolCall(evt.name, evt.arguments);
+          currentToolStep = addToolStep(evt.name);
         } else if (evt.type === "tool_result") {
-          addToolResult(evt.name, evt.result);
+          resolveToolStep(currentToolStep, evt.result && evt.result.success !== false);
+          currentToolStep = null;
         } else if (evt.type === "final") {
           if (evt.content && evt.content.trim()) {
             // 'final' content already shown via thinking — skip duplicate
