@@ -136,19 +136,6 @@
     border-left: 3px solid var(--error);
     color: #ffb3b3;
   }
-  .tool-step {
-    align-self: flex-start;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 12px;
-    font-family: "SF Mono", Monaco, Consolas, monospace;
-    font-size: 12.5px;
-    color: var(--muted);
-  }
-  .tool-step-icon { color: var(--accent); }
-  .tool-step-status { font-weight: 700; }
-
   .tool-header {
     color: var(--tool);
     font-weight: 600;
@@ -361,26 +348,6 @@ function addMessage(role, content, opts = {}) {
   return div;
 }
 
-// Compact, single-line progress step (no argument/output clutter).
-function addToolStep(name) {
-  if (welcomeEl) welcomeEl.remove();
-  const div = document.createElement("div");
-  div.className = "tool-step";
-  div.innerHTML = `<span class="tool-step-icon">⚒</span> <span>${escapeHtml(name)}</span><span class="tool-step-status">…</span>`;
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-  return div;
-}
-
-function resolveToolStep(div, ok) {
-  if (!div) return;
-  const status = div.querySelector(".tool-step-status");
-  if (status) {
-    status.textContent = ok ? "✓" : "✗";
-    status.style.color = ok ? "var(--tool)" : "var(--error)";
-  }
-}
-
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -440,7 +407,6 @@ async function send() {
     const decoder = new TextDecoder();
     let buffer = "";
     let typingRemoved = false;
-    let currentToolStep = null;
 
     while (true) {
       const {value, done} = await reader.read();
@@ -453,20 +419,16 @@ async function send() {
         if (!part.startsWith("data: ")) continue;
         const evt = JSON.parse(part.slice(6));
 
-        if (!typingRemoved) { typingDiv.remove(); typingRemoved = true; }
-
         if (evt.type === "thinking" && evt.content) {
+          if (!typingRemoved) { typingDiv.remove(); typingRemoved = true; }
           addMessage("assistant", evt.content);
-        } else if (evt.type === "tool_call") {
-          currentToolStep = addToolStep(evt.name);
-        } else if (evt.type === "tool_result") {
-          resolveToolStep(currentToolStep, evt.result && evt.result.success !== false);
-          currentToolStep = null;
+        } else if (evt.type === "tool_call" || evt.type === "tool_result") {
+          // Tool activity runs silently and is not shown in the chat.
+          // The typing indicator stays visible until the agent answers.
         } else if (evt.type === "final") {
-          if (evt.content && evt.content.trim()) {
-            // 'final' content already shown via thinking — skip duplicate
-          }
+          // 'final' content already shown via the 'thinking' event — skip duplicate
         } else if (evt.type === "error") {
+          if (!typingRemoved) { typingDiv.remove(); typingRemoved = true; }
           addMessage("error", evt.content);
         }
       }
