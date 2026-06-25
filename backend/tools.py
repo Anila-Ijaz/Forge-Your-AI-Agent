@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 import requests
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 # Sandbox: all file operations happen inside this directory
 WORKSPACE_DIR = Path(os.environ.get("FORGE_WORKSPACE", Path(__file__).parent.parent / "workspace")).resolve()
