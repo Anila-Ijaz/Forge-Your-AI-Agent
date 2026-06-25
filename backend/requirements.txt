@@ -4,6 +4,6 @@ ollama==0.3.3
 openai>=1.40.0
 pydantic==2.9.2
 python-multipart==0.0.12
-duckduckgo-search==6.3.0
+ddgs>=9.0.0
 beautifulsoup4==4.12.3
 requests==2.32.3
