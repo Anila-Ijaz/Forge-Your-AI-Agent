@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from agent import ForgeAgent
 from tools import WORKSPACE_DIR
 from metrics import metrics
+from sessions import sessions
 
 
 def _load_dotenv():
@@ -63,19 +64,35 @@ MODEL = agent.model
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str | None = None
 
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
     """Stream agent events as Server-Sent Events."""
+    # Resolve (or create) the session and load its history into the agent.
+    sess = sessions.get(req.session_id) if req.session_id else None
+    if sess is None:
+        sess = sessions.create()
+    sid = sess["id"]
+    agent.conversation = sess["conversation"]
+    # Name the chat from its first user message.
+    new_title = req.message.strip()[:60] if sess.get("title") in (None, "New chat") else None
+
     def event_stream():
+        yield f"data: {json.dumps({'type': 'session', 'id': sid})}\n\n"
         run = metrics.start_run(req.message)
         status = "done"
         try:
             for event in agent.step(req.message):
-                if event.get("type") == "tool_call":
+                etype = event.get("type")
+                if etype == "tool_call":
                     metrics.record_tool(run, event.get("name", "unknown"))
-                elif event.get("type") == "error":
+                elif etype == "usage":
+                    metrics.record_usage(run, event.get("prompt", 0),
+                                         event.get("completion", 0), event.get("model", MODEL))
+                    continue  # internal event — don't forward to the UI
+                elif etype == "error":
                     status = "error"
                 yield f"data: {json.dumps(event)}\n\n"
             yield "data: {\"type\": \"done\"}\n\n"
@@ -84,6 +101,7 @@ def chat(req: ChatRequest):
             yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
         finally:
             metrics.finish_run(run, status)
+            sessions.save_conversation(sid, agent.conversation, title=new_title)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
@@ -92,6 +110,71 @@ def chat(req: ChatRequest):
 def reset():
     agent.reset()
     return {"ok": True}
+
+
+# ---------- Chat sessions (history) ----------
+
+@app.get("/api/sessions")
+def list_sessions():
+    return {"sessions": sessions.list()}
+
+
+@app.post("/api/sessions")
+def new_session():
+    return sessions.create()
+
+
+@app.get("/api/sessions/{sid}/messages")
+def session_messages(sid: str):
+    msgs = sessions.messages(sid)
+    if msgs is None:
+        raise HTTPException(404, "Session not found")
+    return {"id": sid, "messages": msgs}
+
+
+@app.delete("/api/sessions/{sid}")
+def delete_session(sid: str):
+    return {"ok": sessions.delete(sid)}
+
+
+# Curated OpenAI models offered in the switcher.
+OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1"]
+
+
+@app.get("/api/models")
+def list_models():
+    """Available models to choose from, plus the currently active one."""
+    options = []
+    if OPENAI_API_KEY:
+        for m in OPENAI_MODELS:
+            options.append({"provider": "openai", "model": m, "label": f"OpenAI: {m}"})
+    try:  # local Ollama models, if the daemon is reachable
+        resp = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=2)
+        resp.raise_for_status()
+        for m in resp.json().get("models", []):
+            name = m.get("name", "")
+            if name:
+                options.append({"provider": "ollama", "model": name, "label": f"Ollama: {name}"})
+    except Exception:
+        pass
+    return {"provider": agent.provider, "model": agent.model, "options": options}
+
+
+class ModelRequest(BaseModel):
+    model: str
+    provider: str | None = None
+
+
+@app.post("/api/model")
+def set_model(req: ModelRequest):
+    """Switch the active provider/model at runtime."""
+    global PROVIDER, MODEL
+    try:
+        state = agent.switch(provider=req.provider, model=req.model)
+    except Exception as e:
+        raise HTTPException(400, str(e))
+    PROVIDER, MODEL = state["provider"], state["model"]
+    return state
 
 
 @app.get("/api/workspace")

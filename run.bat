@@ -13,7 +13,7 @@ if errorlevel 1 (
 )
 
 where ollama >nul 2>nul
-if errorlevel 1 (
+if errorlevel 1 
   echo ! Ollama not found. Install from https://ollama.com
   echo   Then run:  ollama pull llama3.1
   exit /b 1

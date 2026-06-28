@@ -76,11 +76,12 @@
 
   .cards {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 14px;
     margin-bottom: 20px;
   }
-  @media (max-width: 720px) { .cards { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 980px) { .cards { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 560px) { .cards { grid-template-columns: repeat(2, 1fr); } }
   .card {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -162,6 +163,8 @@
     <div class="cards">
       <div class="card"><div class="num" id="cRuns">0</div><div class="cap">Total runs</div></div>
       <div class="card"><div class="num" id="cTools">0</div><div class="cap">Tool calls</div></div>
+      <div class="card"><div class="num" id="cTokens">0</div><div class="cap">Tokens used</div></div>
+      <div class="card"><div class="num" id="cCost">$0.00</div><div class="cap">Est. cost</div></div>
       <div class="card"><div class="num" id="cFiles">0</div><div class="cap">Workspace files</div></div>
       <div class="card"><div class="num" id="cSize">0 B</div><div class="cap">Workspace size</div></div>
     </div>
@@ -180,6 +183,12 @@
 
 <script>
 const API = window.location.origin;
+
+function fmtNum(n) {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return (n / 1000).toFixed(n < 10000 ? 1 : 0) + "k";
+  return (n / 1_000_000).toFixed(1) + "M";
+}
 
 function fmtSize(b) {
   if (b < 1024) return b + " B";
@@ -240,13 +249,15 @@ function renderRuns(runs) {
     const dur = r.finished_at ? fmtDuration(r.finished_at - r.started_at) : "running…";
     const toolsLine = r.tools && r.tools.length
       ? `<div class="run-tools">${escapeHtml(r.tools.join(" · "))}</div>` : "";
+    const tokens = (r.prompt_tokens || 0) + (r.completion_tokens || 0);
+    const tokenLine = tokens ? ` · ${fmtNum(tokens)} tokens` : "";
     return `
       <div class="run">
         <div class="run-top">
           <span class="run-prompt">${escapeHtml(r.prompt || "(empty)")}</span>
           <span class="badge ${r.status}">${r.status}</span>
         </div>
-        <div class="run-meta">${ago(r.started_at)} · ${r.tool_calls} tool calls · ${dur}</div>
+        <div class="run-meta">${ago(r.started_at)} · ${r.tool_calls} tool calls · ${dur}${tokenLine}</div>
         ${toolsLine}
       </div>`;
   }).join("");
@@ -269,6 +280,8 @@ async function refresh() {
 
     setText("cRuns", d.total_runs || 0);
     setText("cTools", d.total_tool_calls || 0);
+    setText("cTokens", fmtNum(d.total_tokens || 0));
+    setText("cCost", "$" + (d.total_cost || 0).toFixed(d.total_cost >= 1 ? 2 : 4));
     setText("cFiles", (d.workspace && d.workspace.files) || 0);
     setText("cSize", fmtSize((d.workspace && d.workspace.bytes) || 0));
 

@@ -8,4 +8,5 @@ venv/
 node_modules/
 workspace/*
 !workspace/.gitkeep
+sessions/
 .DS_Store

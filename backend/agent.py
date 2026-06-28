@@ -113,26 +113,42 @@ class ForgeAgent:
 
     def __init__(self, provider: str = None, model: str = None,
                  host: str = "http://localhost:11434", api_key: str = None):
-        api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        self.provider = (provider or os.environ.get("FORGE_PROVIDER")
-                         or ("openai" if api_key else "ollama")).lower()
-        self.model = model or os.environ.get("FORGE_MODEL") or DEFAULT_MODELS[self.provider]
+        self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        self._host = host
+        provider = (provider or os.environ.get("FORGE_PROVIDER")
+                    or ("openai" if self._api_key else "ollama")).lower()
+        model = model or os.environ.get("FORGE_MODEL") or DEFAULT_MODELS.get(provider)
+        self._configure(provider, model)
+        self.conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-        if self.provider == "openai":
+    def _configure(self, provider: str, model: str):
+        """(Re)build the client for a provider and set the active model."""
+        provider = (provider or "").lower()
+        if provider == "openai":
             from openai import OpenAI
-            if not api_key:
+            if not self._api_key:
                 raise ValueError(
                     "OpenAI provider selected but no API key found. "
                     "Set OPENAI_API_KEY (env var or .env file)."
                 )
-            self.client = OpenAI(api_key=api_key)
-        elif self.provider == "ollama":
+            self.client = OpenAI(api_key=self._api_key)
+        elif provider == "ollama":
             import ollama
-            self.client = ollama.Client(host=host)
+            self.client = ollama.Client(host=self._host)
         else:
-            raise ValueError(f"Unknown provider: {self.provider!r} (use 'openai' or 'ollama')")
+            raise ValueError(f"Unknown provider: {provider!r} (use 'openai' or 'ollama')")
+        self.provider = provider
+        self.model = model or DEFAULT_MODELS.get(provider)
 
-        self.conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
+    def switch(self, provider: str = None, model: str = None) -> dict:
+        """Change provider/model at runtime. Resets the conversation when the
+        provider changes, since message formats differ between providers."""
+        new_provider = (provider or self.provider).lower()
+        provider_changed = new_provider != self.provider
+        self._configure(new_provider, model if model else (None if provider_changed else self.model))
+        if provider_changed:
+            self.reset()
+        return {"provider": self.provider, "model": self.model}
 
     def reset(self):
         self.conversation = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -140,9 +156,9 @@ class ForgeAgent:
     # ---------- Provider-specific completion ----------
 
     def _complete(self):
-        """Call the model once. Returns (assistant_text, calls, assistant_msg) where
-        `calls` is a normalized list of {"id", "name", "arguments"} and
-        `assistant_msg` is the turn to append to the conversation."""
+        """Call the model once. Returns (assistant_text, calls, assistant_msg, usage) where
+        `calls` is a normalized list of {"id", "name", "arguments"}, `assistant_msg`
+        is the turn to append, and `usage` is {"prompt", "completion"} token counts."""
         if self.provider == "openai":
             resp = self.client.chat.completions.create(
                 model=self.model, messages=self.conversation, tools=TOOLS_SCHEMA,
@@ -159,7 +175,10 @@ class ForgeAgent:
                      "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
                     for tc in raw
                 ]
-            return text, calls, assistant_msg
+            u = resp.usage
+            usage = {"prompt": getattr(u, "prompt_tokens", 0) or 0,
+                     "completion": getattr(u, "completion_tokens", 0) or 0}
+            return text, calls, assistant_msg, usage
 
         # ollama
         resp = self.client.chat(model=self.model, messages=self.conversation, tools=TOOLS_SCHEMA)
@@ -169,7 +188,9 @@ class ForgeAgent:
         calls = [{"id": None, "name": tc["function"]["name"],
                   "arguments": _loads(tc["function"].get("arguments", {}))} for tc in raw]
         assistant_msg = {"role": "assistant", "content": text, "tool_calls": raw or None}
-        return text, calls, assistant_msg
+        usage = {"prompt": resp.get("prompt_eval_count", 0) or 0,
+                 "completion": resp.get("eval_count", 0) or 0}
+        return text, calls, assistant_msg, usage
 
     # ---------- Agent loop ----------
 
@@ -186,12 +207,14 @@ class ForgeAgent:
 
         for iteration in range(max_iterations):
             try:
-                assistant_text, calls, assistant_msg = self._complete()
+                assistant_text, calls, assistant_msg, usage = self._complete()
             except Exception as e:
                 yield {"type": "error", "content": f"{self.provider} error: {e}"}
                 return
 
             self.conversation.append(assistant_msg)
+            yield {"type": "usage", "model": self.model,
+                   "prompt": usage["prompt"], "completion": usage["completion"]}
 
             # Fallback: weak local models sometimes print tool calls as raw JSON
             # text instead of returning structured tool_calls. Recover them.
