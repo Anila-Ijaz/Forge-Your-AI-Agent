@@ -1,100 +1,129 @@
-# ⚒ Forge — Local AI Agent
+# ⚒ Forge — AI Agent
 
-**Forge is a fully local, open-source AI agent** powered by Ollama. Ask it to build games, websites, scripts, or anything else — it writes real files, runs real commands, and gets things done. Think ChatGPT/Claude, but running on your own machine with full agentic capabilities.
+**Forge is an open-source AI agent** that writes real files, runs real commands, browses the web, and gets things done. Run it on **OpenAI** (GPT-4o / GPT-4.1) for top reliability, or **fully local** with [Ollama](https://ollama.com) so your data never leaves your machine. Think ChatGPT/Claude with full agentic tool use — on your own terms.
 
 ![Status](https://img.shields.io/badge/status-ready-success) ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## ✨ Features
 
-- 🧠 **Local LLM** — runs on Ollama (Llama 3.1, Qwen, Mistral, etc.) — your data never leaves your machine
-- 🛠 **Real tool use** — the agent calls functions to write files, run commands, search the web
-- 💬 **Clean chat UI** — dark-themed, streaming responses, live workspace file viewer
+- 🔁 **Two providers** — OpenAI *or* local Ollama, switchable from a dropdown in the UI (no restart)
+- 🛠 **Real tool use** — write/read/delete files, run shell commands, web search & fetch
+- 💬 **Polished chat UI** — markdown rendering with syntax-highlighted code, streaming, dark theme
+- 🗂 **Chat history** — conversations persist to disk; revisit, rename, or delete past chats
+- 📊 **Live dashboard** — runs, tool usage, **token counts & estimated cost**, workspace stats
 - 🔒 **Sandboxed** — all file ops constrained to a `workspace/` directory
-- 🌐 **Web access** — DuckDuckGo search + page fetching when the agent needs current info
+- 🌐 **Web access** — DuckDuckGo search (`ddgs`) + page fetching when the agent needs current info
 
 ## 🎯 What can it do?
 
 Ask Forge things like:
 
 - *"Build a Snake game as a single HTML file"*
-- *"Create a portfolio website"*
-- *"Write a Python script that summarizes a PDF"*
-- *"Search for the latest Llama model and tell me about it"*
+- *"Make a portfolio website from this CV"* (paste your resume — it uses your real details)
+- *"Write a Python script that fetches Berlin's weather"*
+- *"Search for the latest Llama model and summarize it"*
 - *"Set up a basic Express.js server with a /hello endpoint and run it"*
 
 ## 📋 Prerequisites
 
-1. **Python 3.9+**
-2. **Ollama** — install from [ollama.com](https://ollama.com)
-3. A model that supports tool calling. Recommended:
-   ```bash
-   ollama pull llama3.1
-   # or for smaller/faster:
-   ollama pull qwen2.5:7b
-   # or for stronger reasoning:
-   ollama pull qwen2.5:14b
-   ```
+- **Python 3.10+**
+- **One model provider:**
+  - **OpenAI** — an API key from [platform.openai.com/api-keys](https://platform.openai.com/api-keys) *(easiest, most reliable)*, **or**
+  - **Ollama** — installed from [ollama.com](https://ollama.com) with a tool-calling model pulled:
+    ```bash
+    ollama pull qwen2.5-coder:7b      # great for code/agentic tasks
+    # or: ollama pull llama3.1 / qwen2.5:14b
+    ```
 
-> ⚠️ **Important:** the model must support function/tool calling. Llama 3.1, Qwen 2.5, and Mistral Nemo work well. Older models (Llama 2, Phi-2) won't.
+> ⚠️ For local models, pick one that supports **function/tool calling** (Qwen 2.5, Llama 3.1, Mistral Nemo). Small/old models (Llama 2, Phi-2) won't work well, and 7–8B models can be unreliable at tool calls — OpenAI is recommended for best results.
 
 ## 🚀 Quick Start
 
 ```bash
-# 1. Clone or unzip the project, then:
-cd forge
-
-# 2. Install Python dependencies
+# 1. Install dependencies
 pip install -r backend/requirements.txt
 
-# 3. Start Ollama (if not already running)
-ollama serve &
+# 2. Configure (copy the template and fill in your values)
+cp .env.example .env
+#   - For OpenAI: set OPENAI_API_KEY
+#   - For Ollama: set FORGE_PROVIDER=ollama (and have `ollama serve` running)
 
-# 4. Run Forge
+# 3. Run Forge
 python backend/server.py
 ```
 
-Then open **http://localhost:8000** in your browser.
+Then open **http://localhost:8000** (chat) and **http://localhost:8000/dashboard** (metrics).
+
+On Windows you can just double-click **`run.bat`**.
 
 ## ⚙️ Configuration
 
-Set environment variables to customize:
+Forge reads a **`.env`** file in the project root (gitignored, so secrets never get committed). See [`.env.example`](.env.example):
 
 ```bash
-export FORGE_MODEL="qwen2.5:14b"          # default: llama3.1
-export OLLAMA_HOST="http://localhost:11434"
-export FORGE_WORKSPACE="/path/to/workspace"  # default: ./workspace
-python backend/server.py
+# Provider: "openai" (default when OPENAI_API_KEY is set) or "ollama"
+FORGE_PROVIDER=openai
+
+# --- OpenAI ---
+OPENAI_API_KEY=sk-proj-your-key-here
+FORGE_MODEL=gpt-4o-mini          # or gpt-4o, gpt-4.1-mini, gpt-4.1
+
+# --- Ollama (when FORGE_PROVIDER=ollama) ---
+# OLLAMA_HOST=http://localhost:11434
+# FORGE_MODEL=qwen2.5-coder:7b
+
+# --- Optional ---
+# FORGE_WORKSPACE=/path/to/workspace   # default: ./workspace
 ```
+
+Any of these can also be set as normal environment variables. The active model is also switchable live from the dropdown in the chat header.
 
 ## 📂 Project Structure
 
 ```
-forge/
+Forge-Your-AI-Agent/
 ├── backend/
-│   ├── server.py          # FastAPI server + chat endpoint
-│   ├── agent.py           # Agent loop (think → call tools → repeat)
-│   ├── tools.py           # File ops, shell, web search/fetch
+│   ├── server.py          # FastAPI server: chat (SSE), sessions, models, stats
+│   ├── agent.py           # Agent loop + OpenAI/Ollama provider abstraction
+│   ├── tools.py           # File ops, shell, web search/fetch (sandboxed)
+│   ├── metrics.py         # Run/tool/token/cost tracking for the dashboard
+│   ├── sessions.py        # Persistent chat history
 │   └── requirements.txt
 ├── frontend/
-│   └── index.html         # Single-file chat UI
-├── workspace/             # Where the agent creates files
+│   ├── index.html         # Chat UI (markdown, model switcher, history sidebar)
+│   └── dashboard.html     # Live metrics dashboard
+├── workspace/             # Where the agent creates files (sandboxed)
+├── sessions/              # Saved chat history (gitignored)
+├── .env.example           # Config template
+├── run.bat                # One-click launcher (Windows)
 └── README.md
 ```
 
 ## 🧩 How it works
 
-1. You type a request in the browser.
-2. The frontend POSTs to `/api/chat`, which streams Server-Sent Events.
-3. The backend calls Ollama with the conversation + tool schemas.
-4. If the model returns tool calls, the agent executes them locally and feeds results back.
-5. The loop repeats until the model produces a final answer (no more tool calls).
-6. The UI shows each step: assistant text, tool calls, results, and the workspace file list updates live.
+1. You type a request in the browser; the frontend POSTs to `/api/chat`, which streams **Server-Sent Events**.
+2. The backend loads the session's history and calls the active provider (OpenAI or Ollama) with the conversation + tool schemas.
+3. If the model returns tool calls, the agent executes them locally and feeds the results back.
+4. The loop repeats until the model produces a final answer (no more tool calls).
+5. Token usage and cost are recorded per run; the conversation is saved to its session file.
+6. The dashboard polls `/api/stats` to show live activity.
+
+### Key API endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/chat` | Stream an agent run (SSE) |
+| `GET/POST /api/sessions`, `GET /api/sessions/{id}/messages`, `DELETE …` | Chat history |
+| `GET /api/models`, `POST /api/model` | List / switch the active model |
+| `GET /api/stats` | Dashboard metrics (runs, tools, tokens, cost) |
+| `GET /api/workspace`, `GET /api/workspace/file` | Browse/download generated files |
 
 ## 🛡 Safety notes
 
 - File operations are sandboxed to `workspace/` — paths that try to escape (`../../etc/passwd`) are rejected.
-- Shell commands run in `workspace/` as the user running the server. If you don't trust the model, run it in a container or VM. `run_shell` is powerful.
+- Shell commands run in `workspace/` as the user running the server. If you don't trust the model, run it in a container or VM — `run_shell` is powerful.
 - Web requests go through your machine's network — review fetched content before acting on it.
+- Your `OPENAI_API_KEY` lives only in `.env` (gitignored). Never hardcode it in source files.
 
 ## 🔧 Extending
 
@@ -104,7 +133,7 @@ Add new tools in `backend/tools.py`:
 2. Add a JSON schema entry to `TOOLS_SCHEMA`.
 3. Register it in `TOOL_FUNCTIONS`.
 
-The agent will discover and use it automatically.
+The agent discovers and uses it automatically.
 
 ## 📜 License
 
@@ -112,4 +141,4 @@ MIT — do whatever you want.
 
 ---
 
-**Built with:** FastAPI · Ollama · Vanilla JS · Pure stubbornness 🔥
+**Built with:** FastAPI · OpenAI · Ollama · Vanilla JS · Pure stubbornness 🔥
