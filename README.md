@@ -16,7 +16,7 @@
 
 ## 🎯 What can it do?
 
-Ask Forge things:
+Ask Forge things like the:
 
 - *"Build a Snake game as a single HTML file"*
 - *"Make a portfolio website from this CV"* (paste your resume — it uses your real details)
